@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using System.Configuration;
+using System.Drawing;
 
 namespace WindowsFormsApp5
 {
@@ -22,7 +23,8 @@ namespace WindowsFormsApp5
         private byte[] szData;
         private const String CRLF = "\r\n";
         #endregion
-
+        private Image folderIcon;
+        private Image fileIcon;
         #region  Private Functions
 
         private String getSatus()
@@ -115,23 +117,64 @@ namespace WindowsFormsApp5
                         break;
                 }
 
-                lsb_server.Items.Add(prefix + temp[temp.Length - 1]);
+                // 创建 ListItem 对象
+                ListItem item = new ListItem
+                {
+                    Text = temp[temp.Length - 1],
+                    IsFolder = type == "d",
+                    OriginalData = prefix + temp[temp.Length - 1]
+                };
+
+                // 将 ListItem 对象添加到 ListBox
+                lsb_server.Items.Add(item);
             }
 
             closeDataPort();
         }
+
 
         #endregion
 
         public Form1()
         {
             InitializeComponent();
+
+            // 加载图标
+            string basePath = AppDomain.CurrentDomain.BaseDirectory;
+            string projectRoot = Directory.GetParent(basePath).Parent.Parent.FullName;
+            string folderIconPath = Path.Combine(projectRoot, "source", "pic1.png");
+            string fileIconPath = Path.Combine(projectRoot, "source", "pic2.png");
+
+            folderIcon = new Bitmap(Image.FromFile(folderIconPath), new Size(24, 24));
+            fileIcon = new Bitmap(Image.FromFile(fileIconPath), new Size(24, 24));
+
+
+            // 设置 ListBox 为 OwnerDraw 模式
+            lsb_server.DrawMode = DrawMode.OwnerDrawFixed;
+            lsb_server.DrawItem += new DrawItemEventHandler(lsb_server_DrawItem);
+
             int i = int.Parse(ConfigurationManager.AppSettings["able"]);
             if (i == 0)
             {
+                // 默认
                 ConfigurationManager.AppSettings["local"] = Environment.CurrentDirectory;
                 ConfigurationManager.AppSettings["able"] = "1";
             }
+        }
+        private void lsb_server_DrawItem(object sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0) return;
+
+            e.DrawBackground();
+
+            if (lsb_server.Items[e.Index] is ListItem item)
+            {
+                Image icon = item.IsFolder ? folderIcon : fileIcon;
+                e.Graphics.DrawImage(icon, e.Bounds.Left, e.Bounds.Top);
+                e.Graphics.DrawString(item.OriginalData, e.Font, Brushes.Black, e.Bounds.Left + icon.Width, e.Bounds.Top);
+            }
+
+            e.DrawFocusRectangle();
         }
 
         private void textBox3_TextChanged(object sender, EventArgs e)
@@ -277,20 +320,29 @@ namespace WindowsFormsApp5
         {
             if (e.Button == MouseButtons.Right)
             {
-                lsb_server.SelectedIndex = lsb_server.IndexFromPoint(e.X, e.Y);
-                string abc = lsb_server.SelectedItem.ToString();
-                string type = abc.Substring(1, 2);
-                if (type == "文件")
+                int index = lsb_server.IndexFromPoint(e.X, e.Y);
+                if (index != ListBox.NoMatches)
                 {
-                    contextMenuStrip1.Show(Control.MousePosition.X, Control.MousePosition.Y);
+                    lsb_server.SelectedIndex = index;
+                    if (lsb_server.SelectedItem is ListItem selectedItem)
+                    {
+                        // 使用 selectedItem.OriginalData 或 selectedItem.Text 进行后续操作
+                        string abc = selectedItem.OriginalData;
+                        string type = abc.Substring(1, 2);
+                        if (type == "文件")
+                        {
+                            contextMenuStrip1.Show(Control.MousePosition.X, Control.MousePosition.Y);
+                        }
+                    }
                 }
             }
         }
 
+
         private void 下载ToolStripMenuItem_Click(object sender, EventArgs e)
         {
             string path = ConfigurationManager.AppSettings["local"];
-            if (path == "" || lsb_server.SelectedIndex < 0)
+            if (string.IsNullOrEmpty(path) || lsb_server.SelectedIndex < 0)
             {
                 MessageBox.Show("请选择目标文件和下载路径", "ERROR");
                 return;
@@ -299,43 +351,50 @@ namespace WindowsFormsApp5
             Cursor cr = Cursor.Current;
             Cursor.Current = Cursors.WaitCursor;
 
-            string fileName = Regex.Split(lsb_server.Items[lsb_server.SelectedIndex].ToString(), " ")[1];
-            string filePath = path + "\\" + fileName;
-
-            long existingFileSize = 0;
-            if (File.Exists(filePath))
+            if (lsb_server.SelectedItem is ListItem selectedItem)
             {
-                FileInfo fileInfo = new FileInfo(filePath);
-                existingFileSize = fileInfo.Length;
-            }
+                string fileName = selectedItem.Text;
+                string filePath = Path.Combine(path, fileName);
 
-            this.openDataPort();
+                long existingFileSize = 0;
+                if (File.Exists(filePath))
+                {
+                    FileInfo fileInfo = new FileInfo(filePath);
+                    existingFileSize = fileInfo.Length;
+                }
 
-            if (existingFileSize > 0)
-            {
-                cmdData = "REST " + existingFileSize + CRLF;
+                this.openDataPort();
+
+                if (existingFileSize > 0)
+                {
+                    cmdData = "REST " + existingFileSize + CRLF;
+                    szData = Encoding.ASCII.GetBytes(cmdData.ToCharArray());
+                    cmdSocket.Send(szData);
+                    this.getSatus();
+                }
+
+                cmdData = "RETR " + fileName + CRLF;
                 szData = Encoding.ASCII.GetBytes(cmdData.ToCharArray());
                 cmdSocket.Send(szData);
                 this.getSatus();
+
+                using (FileStream fstrm = new FileStream(filePath, FileMode.Append))
+                {
+                    byte[] fbytes = new byte[1030];
+                    int cnt = 0;
+                    while ((cnt = dataStrmWtr.Read(fbytes, 0, 1024)) > 0)
+                    {
+                        fstrm.Write(fbytes, 0, cnt);
+                    }
+                }
+
+                this.closeDataPort();
             }
 
-            cmdData = "RETR " + fileName + CRLF;
-            szData = Encoding.ASCII.GetBytes(cmdData.ToCharArray());
-            cmdSocket.Send(szData);
-            this.getSatus();
-
-            FileStream fstrm = new FileStream(filePath, FileMode.Append);
-            byte[] fbytes = new byte[1030];
-            int cnt = 0;
-            while ((cnt = dataStrmWtr.Read(fbytes, 0, 1024)) > 0)
-            {
-                fstrm.Write(fbytes, 0, cnt);
-            }
-            fstrm.Close();
-
-            this.closeDataPort();
             Cursor.Current = cr;
         }
+
+
 
         private void Form1_Load(object sender, EventArgs e)
         {
@@ -500,5 +559,17 @@ namespace WindowsFormsApp5
                 contextMenuStrip2.Show(Control.MousePosition.X, Control.MousePosition.Y);
             }
         }
+
+        private void lsb_server_SelectedIndexChanged(object sender, EventArgs e)
+        {
+
+        }
     }
+    public class ListItem
+    {
+        public string Text { get; set; }
+        public bool IsFolder { get; set; }
+        public string OriginalData { get; set; }
+    }
+
 }

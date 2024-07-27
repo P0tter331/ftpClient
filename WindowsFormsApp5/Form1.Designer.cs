@@ -84,6 +84,7 @@
             this.lsb_server.Size = new System.Drawing.Size(434, 454);
             this.lsb_server.TabIndex = 0;
             this.lsb_server.MouseClick += new System.Windows.Forms.MouseEventHandler(this.lsb_server_MouseClick);
+            this.lsb_server.SelectedIndexChanged += new System.EventHandler(this.lsb_server_SelectedIndexChanged);
             this.lsb_server.MouseUp += new System.Windows.Forms.MouseEventHandler(this.lsb_server_MouseUp);
             // 
             // contextMenuStrip1
