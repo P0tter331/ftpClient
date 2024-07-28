@@ -6,12 +6,14 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using System.Configuration;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace WindowsFormsApp5
 {
     public partial class Form1 : Form
     {
-        #region  Private variable
+        #region Private variable
         private Socket cmdSocket;
         private Socket dataSocket;
         private NetworkStream cmdStrmWtr;
@@ -21,17 +23,22 @@ namespace WindowsFormsApp5
         private String cmdData;
         private byte[] szData;
         private const String CRLF = "\r\n";
+        private bool isPaused = false;
+        private ManualResetEvent pauseEvent = new ManualResetEvent(true);
         #endregion
 
-        #region  Private Functions
+        #region Private Functions
 
         private String getSatus()
         {
             byte[] buffer = new byte[1024];
             int bytesRead = cmdSocket.Receive(buffer);
             String ret = Encoding.ASCII.GetString(buffer, 0, bytesRead);
-            lsb_status.Items.Add(ret);
-            lsb_status.SelectedIndex = lsb_status.Items.Count - 1;
+            Invoke((MethodInvoker)(() =>
+            {
+                lsb_status.Items.Add(ret);
+                lsb_status.SelectedIndex = lsb_status.Items.Count - 1;
+            }));
             return ret;
         }
 
@@ -52,7 +59,10 @@ namespace WindowsFormsApp5
             if (retArray[5][2] != ')') retstr = retArray[5].Substring(0, 3);
             else retstr = retArray[5].Substring(0, 2);
             dataPort = Convert.ToInt32(retArray[4]) * 256 + Convert.ToInt32(retstr);
-            lsb_status.Items.Add("Get dataPort=" + dataPort);
+            Invoke((MethodInvoker)(() =>
+            {
+                lsb_status.Items.Add("Get dataPort=" + dataPort);
+            }));
 
             string IP = tb_IP.Text;
 
@@ -88,7 +98,11 @@ namespace WindowsFormsApp5
             cmdSocket.Send(szData);
             this.getSatus();
 
-            lsb_server.Items.Clear();
+            Invoke((MethodInvoker)(() =>
+            {
+                lsb_server.Items.Clear();
+            }));
+
             while ((absFilePath = dataStrmRdr.ReadLine()) != null)
             {
                 string type;
@@ -115,7 +129,10 @@ namespace WindowsFormsApp5
                         break;
                 }
 
-                lsb_server.Items.Add(prefix + temp[temp.Length - 1]);
+                Invoke((MethodInvoker)(() =>
+                {
+                    lsb_server.Items.Add(prefix + temp[temp.Length - 1]);
+                }));
             }
 
             closeDataPort();
@@ -138,56 +155,13 @@ namespace WindowsFormsApp5
         {
         }
 
-        #region  Button:  Connect & Disconnect
+        #region Button: Connect & Disconnect
 
         private void btn_conn_Click(object sender, EventArgs e)
         {
             if (btn_conn.Text == "连接")
             {
-                Cursor cr = Cursor.Current;
-                Cursor.Current = Cursors.WaitCursor;
-                try
-                {
-                    // 解析域名
-                    string host = tb_IP.Text;
-                    string ipAddress = ResolveHostNameToIp(host);
-                    if (ipAddress == null)
-                    {
-                        lsb_status.Items.Add("ERROR: 无法解析域名 " + host);
-                        return;
-                    }
-
-                    cmdSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                    cmdSocket.Connect(ipAddress, Convert.ToInt32(tb_port.Text));
-                    lsb_status.Items.Clear();
-
-                    this.getSatus();
-
-                    // Login
-                    cmdData = "USER " + tb_username.Text + CRLF;
-                    szData = Encoding.ASCII.GetBytes(cmdData.ToCharArray());
-                    cmdSocket.Send(szData);
-                    this.getSatus();
-
-                    cmdData = "PASS " + tb_password.Text + CRLF;
-                    szData = Encoding.ASCII.GetBytes(cmdData.ToCharArray());
-                    cmdSocket.Send(szData);
-                    string retstr = this.getSatus().Substring(0, 3);
-                    if (Convert.ToInt32(retstr) == 530) throw new InvalidOperationException("帐号密码错误");
-
-                    this.freshFileBox_Right();
-
-                    lb_IP.Text = tb_IP.Text + ":";
-                    btn_conn.Text = "断开";
-                }
-                catch (InvalidOperationException err)
-                {
-                    lsb_status.Items.Add("ERROR: " + err.Message.ToString());
-                }
-                finally
-                {
-                    Cursor.Current = cr;
-                }
+                Task.Run(() => ConnectToFtpServer());
             }
             else
             {
@@ -202,11 +176,64 @@ namespace WindowsFormsApp5
 
                 cmdSocket.Close();
 
-                lb_IP.Text = "";
-                btn_conn.Text = "连接";
-                lsb_server.Items.Clear();
+                Invoke((MethodInvoker)(() =>
+                {
+                    lb_IP.Text = "";
+                    btn_conn.Text = "连接";
+                    lsb_server.Items.Clear();
+                }));
 
                 Cursor.Current = cr;
+            }
+        }
+
+        private void ConnectToFtpServer()
+        {
+            Invoke((MethodInvoker)(() => Cursor.Current = Cursors.WaitCursor));
+            try
+            {
+                // 解析域名
+                string host = tb_IP.Text;
+                string ipAddress = ResolveHostNameToIp(host);
+                if (ipAddress == null)
+                {
+                    Invoke((MethodInvoker)(() => lsb_status.Items.Add("ERROR: 无法解析域名 " + host)));
+                    return;
+                }
+
+                cmdSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                cmdSocket.Connect(ipAddress, Convert.ToInt32(tb_port.Text));
+                Invoke((MethodInvoker)(() => lsb_status.Items.Clear()));
+
+                this.getSatus();
+
+                // Login
+                cmdData = "USER " + tb_username.Text + CRLF;
+                szData = Encoding.ASCII.GetBytes(cmdData.ToCharArray());
+                cmdSocket.Send(szData);
+                this.getSatus();
+
+                cmdData = "PASS " + tb_password.Text + CRLF;
+                szData = Encoding.ASCII.GetBytes(cmdData.ToCharArray());
+                cmdSocket.Send(szData);
+                string retstr = this.getSatus().Substring(0, 3);
+                if (Convert.ToInt32(retstr) == 530) throw new InvalidOperationException("帐号密码错误");
+
+                this.freshFileBox_Right();
+
+                Invoke((MethodInvoker)(() =>
+                {
+                    lb_IP.Text = tb_IP.Text + ":";
+                    btn_conn.Text = "断开";
+                }));
+            }
+            catch (InvalidOperationException err)
+            {
+                Invoke((MethodInvoker)(() => lsb_status.Items.Add("ERROR: " + err.Message.ToString())));
+            }
+            finally
+            {
+                Invoke((MethodInvoker)(() => Cursor.Current = Cursors.Default));
             }
         }
 
@@ -225,7 +252,7 @@ namespace WindowsFormsApp5
             }
             catch (Exception ex)
             {
-                lsb_status.Items.Add("ERROR: " + ex.Message);
+                Invoke((MethodInvoker)(() => lsb_status.Items.Add("ERROR: " + ex.Message)));
             }
             return null;
         }
@@ -234,22 +261,21 @@ namespace WindowsFormsApp5
 
         private void lsb_server_MouseClick(object sender, MouseEventArgs e)
         {
-            string retstr;
-            string type;
             int index = lsb_server.IndexFromPoint(e.X, e.Y);
             lsb_server.SelectedIndex = index;
             if (lsb_server.SelectedIndex != -1)
             {
-                MessageBox.Show(lsb_server.SelectedItem.ToString());
+                string selectedItem = lsb_server.SelectedItem.ToString();
+                MessageBox.Show(selectedItem);
 
-                type = lsb_server.SelectedItem.ToString().Substring(1, 2);
+                string type = selectedItem.Substring(1, 2);
                 if (type == "目录")
                 {
-                    cmdData = "CWD " + lsb_server.SelectedItem.ToString().Substring(5) + CRLF;
-                    lb_IP.Text += "/" + lsb_server.SelectedItem.ToString().Substring(5);
+                    cmdData = "CWD " + selectedItem.Substring(5) + CRLF;
+                    lb_IP.Text += "/" + selectedItem.Substring(5);
                     szData = Encoding.ASCII.GetBytes(cmdData.ToCharArray());
                     cmdSocket.Send(szData);
-                    retstr = this.getSatus();
+                    string retstr = this.getSatus();
                     lsb_status.Items.Add(retstr);
                     freshFileBox_Right();
                 }
@@ -277,30 +303,58 @@ namespace WindowsFormsApp5
         {
             if (e.Button == MouseButtons.Right)
             {
-                lsb_server.SelectedIndex = lsb_server.IndexFromPoint(e.X, e.Y);
-                string abc = lsb_server.SelectedItem.ToString();
-                string type = abc.Substring(1, 2);
-                if (type == "文件")
+                int index = lsb_server.IndexFromPoint(e.X, e.Y);
+                lsb_server.SelectedIndex = index;
+                if (lsb_server.SelectedIndex != -1)
                 {
-                    contextMenuStrip1.Show(Control.MousePosition.X, Control.MousePosition.Y);
+                    string selectedItem = lsb_server.SelectedItem.ToString();
+                    string type = selectedItem.Substring(1, 2);
+                    if (type == "文件")
+                    {
+                        contextMenuStrip1.Show(Control.MousePosition.X, Control.MousePosition.Y);
+                    }
                 }
             }
         }
 
         private void 下载ToolStripMenuItem_Click(object sender, EventArgs e)
         {
+            Task.Run(() => DownloadFile());
+        }
+
+        private void DownloadFile()
+        {
             string path = ConfigurationManager.AppSettings["local"];
-            if (path == "" || lsb_server.SelectedIndex < 0)
+            if (string.IsNullOrEmpty(path))
             {
-                MessageBox.Show("请选择目标文件和下载路径", "ERROR");
+                Invoke((MethodInvoker)(() => MessageBox.Show("请选择目标文件和下载路径", "ERROR")));
                 return;
             }
 
-            Cursor cr = Cursor.Current;
-            Cursor.Current = Cursors.WaitCursor;
+            string fileName = string.Empty;
+            if (InvokeRequired)
+            {
+                Invoke((MethodInvoker)(() =>
+                {
+                    if (lsb_server.SelectedIndex < 0)
+                    {
+                        MessageBox.Show("请选择目标文件和下载路径", "ERROR");
+                        return;
+                    }
+                    fileName = Regex.Split(lsb_server.Items[lsb_server.SelectedIndex].ToString(), " ")[1];
+                }));
+            }
+            else
+            {
+                if (lsb_server.SelectedIndex < 0)
+                {
+                    MessageBox.Show("请选择目标文件和下载路径", "ERROR");
+                    return;
+                }
+                fileName = Regex.Split(lsb_server.Items[lsb_server.SelectedIndex].ToString(), " ")[1];
+            }
 
-            string fileName = Regex.Split(lsb_server.Items[lsb_server.SelectedIndex].ToString(), " ")[1];
-            string filePath = path + "\\" + fileName;
+            string filePath = Path.Combine(path, fileName);
 
             long existingFileSize = 0;
             if (File.Exists(filePath))
@@ -327,14 +381,31 @@ namespace WindowsFormsApp5
             FileStream fstrm = new FileStream(filePath, FileMode.Append);
             byte[] fbytes = new byte[1030];
             int cnt = 0;
+
+            // 更新进度条
+            long totalBytes = GetRemoteFileSize(fileName);
+            Invoke((MethodInvoker)(() =>
+            {
+                progressBar.Maximum = 100;
+                progressBar.Value = (int)((existingFileSize * 100) / totalBytes);
+            }));
+
             while ((cnt = dataStrmWtr.Read(fbytes, 0, 1024)) > 0)
             {
+                pauseEvent.WaitOne();
                 fstrm.Write(fbytes, 0, cnt);
+
+                // 更新进度条
+                existingFileSize += cnt;
+                Invoke((MethodInvoker)(() =>
+                {
+                    progressBar.Value = (int)((existingFileSize * 100) / totalBytes);
+                }));
             }
             fstrm.Close();
 
             this.closeDataPort();
-            Cursor.Current = cr;
+            Invoke((MethodInvoker)(() => Cursor.Current = Cursors.Default));
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -436,13 +507,22 @@ namespace WindowsFormsApp5
 
         private void 上传ToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            Cursor cr = Cursor.Current;
-            Cursor.Current = Cursors.WaitCursor;
+            Task.Run(() => UploadFile());
+        }
+
+        private void UploadFile()
+        {
+            Invoke((MethodInvoker)(() => Cursor.Current = Cursors.WaitCursor));
 
             if (btn_conn.Text == "断开")
             {
-                string fileName = lvList.SelectedItems[0].Text;
-                string filePath = lvList.SelectedItems[0].SubItems[3].Text;
+                string fileName = string.Empty;
+                string filePath = string.Empty;
+                Invoke((MethodInvoker)(() =>
+                {
+                    fileName = lvList.SelectedItems[0].Text;
+                    filePath = lvList.SelectedItems[0].SubItems[3].Text;
+                }));
 
                 this.openDataPort();
 
@@ -466,6 +546,7 @@ namespace WindowsFormsApp5
                 int cnt = 0;
                 while ((cnt = fstrm.Read(fbytes, 0, 1024)) > 0)
                 {
+                    pauseEvent.WaitOne();
                     dataStrmWtr.Write(fbytes, 0, cnt);
                 }
                 fstrm.Close();
@@ -475,9 +556,9 @@ namespace WindowsFormsApp5
             }
             else
             {
-                MessageBox.Show("请先连接！");
+                Invoke((MethodInvoker)(() => MessageBox.Show("请先连接！")));
             }
-            Cursor.Current = cr;
+            Invoke((MethodInvoker)(() => Cursor.Current = Cursors.Default));
         }
 
         private long GetRemoteFileSize(string fileName)
@@ -498,6 +579,22 @@ namespace WindowsFormsApp5
             if (e.Button == MouseButtons.Right && lvList.SelectedIndices.Count != 0)
             {
                 contextMenuStrip2.Show(Control.MousePosition.X, Control.MousePosition.Y);
+            }
+        }
+
+        private void btnPauseResume_Click(object sender, EventArgs e)
+        {
+            if (isPaused)
+            {
+                pauseEvent.Set();
+                btnPauseResume.Text = "暂停";
+                isPaused = false;
+            }
+            else
+            {
+                pauseEvent.Reset();
+                btnPauseResume.Text = "继续";
+                isPaused = true;
             }
         }
     }
